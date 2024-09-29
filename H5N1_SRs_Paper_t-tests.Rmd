@@ -1,0 +1,429 @@
+---
+title: "H5N1_SRs_Paper_t-tests"
+output: html_document
+date: "2024-09-23"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+##Load libraries
+```{r}
+library(tidyverse)
+library(openxlsx)
+library(ggplot2)
+library(wesanderson)
+library(RColorBrewer)
+library(rempsyc)
+library(broom)
+```
+
+##Load raw data files
+```{r}
+raw_data_for_ttests <- '/Users/rgeiger/Dropbox/H5N1_SR_paper/SupplementaryTables_ttests.xlsx'
+```
+
+##Read sheets into tibbles
+```{r}
+read_sheet_data <- function(file,  sheetname) {
+  sheet_data <- read.xlsx(file, sheet=sheetname, colNames=TRUE)
+  return(sheet_data) }
+
+figS1_tableS1 <- read_sheet_data(raw_data_for_ttests, 'Table_S1')
+fig1B_tableS2 <- read_sheet_data(raw_data_for_ttests, 'Table_S2')
+fig1C_tableS3 <- read_sheet_data(raw_data_for_ttests, 'Table_S3')
+fig1D_tableS4 <- read_sheet_data(raw_data_for_ttests, 'Table_S4')
+figS2B_tableS5 <- read_sheet_data(raw_data_for_ttests, 'Table_S5')
+fig2C_tableS6 <- read_sheet_data(raw_data_for_ttests, 'Table_S6')
+fig2D_tableS7 <- read_sheet_data(raw_data_for_ttests, 'Table_S7')
+fig3A_tableS8 <- read_sheet_data(raw_data_for_ttests, 'Table_S8')
+fig3B_tableS9 <- read_sheet_data(raw_data_for_ttests, 'Table_S9')
+figS3A_tableS10 <- read_sheet_data(raw_data_for_ttests, 'Table_S10')
+figS3B_tableS11 <- read_sheet_data(raw_data_for_ttests, 'Table_S11')
+fig4A_tableS12 <- read_sheet_data(raw_data_for_ttests, 'Table_S12_analyzed')
+fig4B_tableS13 <- read_sheet_data(raw_data_for_ttests, 'Table_S13_analyzed')
+fig4C_tableS14 <- read_sheet_data(raw_data_for_ttests, 'Table_S14_analyzed')
+fig4D_tableS15 <- read_sheet_data(raw_data_for_ttests, 'Table_S15_analyzed')
+```
+
+#Create Analyze Restriction Function
+###Takes raw luciferase values, normalizes, calculates fold change to ev, and performs unpaired Welch's t-test to wtMxA
+```{r}
+analyze_restriction_data <- function(my_tbl) {
+  ## get normalized values
+  cols_to_use <- grep("firefly", colnames(my_tbl), value=TRUE)
+  for (each_colname in cols_to_use) {
+    renilla_colname <- gsub("firefly","renilla",each_colname)
+    new_colname <- gsub("firefly-well","norm",each_colname)
+    my_tbl[,new_colname] <- my_tbl[,each_colname] / my_tbl[,renilla_colname]
+  }
+  ## get EV mean norm
+  ev_mean_norm <- my_tbl %>% 
+    filter(variant == 'empty_vector') %>% 
+    select(starts_with("norm")) %>% 
+    as.numeric() %>% 
+    na.omit() %>% 
+    mean()
+    
+  ## calculate norm to EV
+  norm_cols <- grep("norm", colnames(my_tbl), value = TRUE)
+  for (each_colname in norm_cols) {
+    norm_to_ev_colname <- gsub("norm", "norm_to_ev", each_colname)
+    my_tbl[,norm_to_ev_colname] <- ev_mean_norm / my_tbl[,each_colname]
+  }
+  
+  ## get just the norm_to_ev and variant cols
+  my_tbl_selected <- my_tbl %>%
+    select(variant, starts_with("norm_to_ev"))
+  
+  # Extract the control row based on the "variant" column
+  if(!"wtMxA" %in% my_tbl_selected$variant) {
+    stop("\n\nERROR - wtMxA not found in the variant column\n\n")
+  }
+  control_row <- my_tbl_selected %>%
+    filter(variant == "wtMxA") %>%
+    select(-variant) %>%
+    slice(1) %>%  # Taking the first match in case there are duplicates
+    as.numeric()
+  
+  # Function to perform t-test between control and a specific row
+  t_test_with_control <- function(row) {
+    t.test(control_row, row, paired = FALSE, var.equal = FALSE)
+  }
+  
+  # Apply the function to each row excluding the control row
+  ttest_results <- lapply(1:dim(my_tbl_selected)[1], function(row_number) {
+    dat <- my_tbl_selected[row_number,] %>% 
+      select(starts_with("norm_to_ev")) %>% 
+      as.numeric()
+    t_test_with_control(dat)
+  })
+  # return(ttest_results)
+  ttest_results_by_variant <- sapply(names(ttest_results[[1]]), function(each_result)  {
+    all_res <- sapply(ttest_results, "[[", each_result)
+    if(class(all_res)[1] == "matrix") {
+      all_res <- t(all_res)
+      colnames(all_res) <- paste(each_result, 1:dim(all_res)[2], sep="_" )
+      all_res <- as_tibble(all_res)
+    } else {
+      all_res <- tibble(myCol=all_res)
+      colnames(all_res) <- each_result
+    }
+    return(all_res)
+  })
+  ttest_results_by_variant <- bind_cols(ttest_results_by_variant)
+  
+  my_tbl <- bind_cols(my_tbl, ttest_results_by_variant)%>% 
+    relocate(p.value, .before = statistic)
+  return(my_tbl)
+}
+```
+
+##Results for single plate experiments
+```{r}
+fig1C_results <- analyze_restriction_data(fig1C_tableS3)
+
+fig2C_results <- analyze_restriction_data(fig2C_tableS6)
+
+fig2D_results <- analyze_restriction_data(fig2D_tableS7)
+
+figS1_results <- analyze_restriction_data(figS1_tableS1)
+
+figS2B_results <- analyze_restriction_data(figS2B_tableS5)
+
+figS3A_results <- analyze_restriction_data(figS3A_tableS10)
+
+figS3B_results <- analyze_restriction_data(figS3B_tableS11)
+```
+
+
+##Function for fold change to ev already calculated because of multiple plates
+```{r}
+##Note: both minireplicons have the 2X mxa listed as 200ng, but this is a typo. THOV got half the amount of DNA VN04 got
+analyze_restriction_data_to2XMxA <- function(my_tbl) {
+  ## get just the norm_to_ev and variant cols
+  my_tbl_selected <- my_tbl %>%
+    select(variant, starts_with("norm_to_ev"))
+  
+  # Extract the control row based on the "variant" column
+  control_row <- my_tbl_selected %>%
+    filter(variant == "wtMxA200") %>%
+    select(-variant) %>%
+    slice(1) %>%  # Taking the first match in case there are duplicates
+    as.numeric()
+  
+  # Function to perform t-test between control and a specific row
+  t_test_with_control <- function(row) {
+    t.test(control_row, row, paired = FALSE, var.equal = FALSE)
+  }
+  
+  # Apply the function to each row excluding the control row
+  ttest_results <- lapply(1:dim(my_tbl_selected)[1], function(row_number) {
+    dat <- my_tbl_selected[row_number,] %>% 
+      select(starts_with("norm_to_ev")) %>% 
+      as.numeric() %>% 
+      na.omit()
+    t_test_with_control(dat)
+  })
+  
+  ttest_results_by_variant <- sapply(names(ttest_results[[1]]), function(each_result)  {
+    all_res <- sapply(ttest_results, "[[", each_result)
+    if(class(all_res)[1] == "matrix") {
+      all_res <- t(all_res)
+      colnames(all_res) <- paste(each_result, 1:dim(all_res)[2], sep="_" )
+      all_res <- as_tibble(all_res)
+    } else {
+      all_res <- tibble(myCol=all_res)
+      colnames(all_res) <- each_result
+    }
+    return(all_res)
+  })
+  
+  ttest_results_by_variant <- bind_cols(ttest_results_by_variant)
+  
+  my_tbl <- bind_cols(my_tbl, ttest_results_by_variant) %>% 
+    relocate(p.value, .before = statistic)
+  return(my_tbl)
+}
+
+fig4A_results <- analyze_restriction_data_to2XMxA(fig4A_tableS12)
+
+fig4B_results <- analyze_restriction_data_to2XMxA(fig4B_tableS13)
+```
+
+##For figure 2C t-tests to SWSTR
+```{r}
+analyze_restriction_data_toSWSTR <- function(my_tbl) {
+  ## get normalized values
+  cols_to_use <- grep("firefly", colnames(my_tbl), value=TRUE)
+  for (each_colname in cols_to_use) {
+    renilla_colname <- gsub("firefly","renilla",each_colname)
+    new_colname <- gsub("firefly-well","norm",each_colname)
+    my_tbl[,new_colname] <- my_tbl[,each_colname] / my_tbl[,renilla_colname]
+  }
+  ## get EV mean norm
+  ev_mean_norm <- my_tbl %>% 
+    filter(variant == 'empty_vector') %>% 
+    select(starts_with("norm")) %>% 
+    as.numeric() %>% 
+    na.omit() %>% 
+    mean()
+    
+  ## calculate norm to EV
+  norm_cols <- grep("norm", colnames(my_tbl), value = TRUE)
+  for (each_colname in norm_cols) {
+    norm_to_ev_colname <- gsub("norm", "norm_to_ev", each_colname)
+    my_tbl[,norm_to_ev_colname] <- ev_mean_norm / my_tbl[,each_colname]
+  }
+  
+  ## get just the norm_to_ev and variant cols
+  my_tbl_selected <- my_tbl %>%
+    select(variant, starts_with("norm_to_ev"))
+  
+  # Extract the control row based on the "variant" column
+  if(!"SWSTR" %in% my_tbl_selected$variant) {
+    stop("\n\nERROR - SWSTR not found in the variant column\n\n")
+  }
+  control_row <- my_tbl_selected %>%
+    filter(variant == "SWSTR") %>%
+    select(-variant) %>%
+    slice(1) %>%  # Taking the first match in case there are duplicates
+    as.numeric()
+  
+  # Function to perform t-test between control and a specific row
+  t_test_with_control <- function(row) {
+    t.test(control_row, row, paired = FALSE, var.equal = FALSE)
+  }
+  
+  # Apply the function to each row excluding the control row
+  ttest_results <- lapply(1:dim(my_tbl_selected)[1], function(row_number) {
+    dat <- my_tbl_selected[row_number,] %>% 
+      select(starts_with("norm_to_ev")) %>% 
+      as.numeric()
+    t_test_with_control(dat)
+  })
+  # return(ttest_results)
+  ttest_results_by_variant <- sapply(names(ttest_results[[1]]), function(each_result)  {
+    all_res <- sapply(ttest_results, "[[", each_result)
+    if(class(all_res)[1] == "matrix") {
+      all_res <- t(all_res)
+      colnames(all_res) <- paste(each_result, 1:dim(all_res)[2], sep="_" )
+      all_res <- as_tibble(all_res)
+    } else {
+      all_res <- tibble(myCol=all_res)
+      colnames(all_res) <- each_result
+    }
+    return(all_res)
+  })
+  ttest_results_by_variant <- bind_cols(ttest_results_by_variant)
+  
+  my_tbl <- bind_cols(my_tbl, ttest_results_by_variant)%>% 
+    relocate(p.value, .before = statistic)
+  return(my_tbl)
+}
+
+fig2C_results_toSWSTR <- analyze_restriction_data_toSWSTR(fig2C_tableS6)
+```
+
+##For figure 2C t-tests to SWSTR
+```{r}
+analyze_restriction_data_toNLS <- function(my_tbl) {
+  ## get normalized values
+  cols_to_use <- grep("firefly", colnames(my_tbl), value=TRUE)
+  for (each_colname in cols_to_use) {
+    renilla_colname <- gsub("firefly","renilla",each_colname)
+    new_colname <- gsub("firefly-well","norm",each_colname)
+    my_tbl[,new_colname] <- my_tbl[,each_colname] / my_tbl[,renilla_colname]
+  }
+  ## get EV mean norm
+  ev_mean_norm <- my_tbl %>% 
+    filter(variant == 'empty_vector') %>% 
+    select(starts_with("norm")) %>% 
+    as.numeric() %>% 
+    na.omit() %>% 
+    mean()
+    
+  ## calculate norm to EV
+  norm_cols <- grep("norm", colnames(my_tbl), value = TRUE)
+  for (each_colname in norm_cols) {
+    norm_to_ev_colname <- gsub("norm", "norm_to_ev", each_colname)
+    my_tbl[,norm_to_ev_colname] <- ev_mean_norm / my_tbl[,each_colname]
+  }
+  
+  ## get just the norm_to_ev and variant cols
+  my_tbl_selected <- my_tbl %>%
+    select(variant, starts_with("norm_to_ev"))
+  
+  # Extract the control row based on the "variant" column
+  if(!"NLS-wtMxA" %in% my_tbl_selected$variant) {
+    stop("\n\nERROR - NLS-wtMxA not found in the variant column\n\n")
+  }
+  control_row <- my_tbl_selected %>%
+    filter(variant == "NLS-wtMxA") %>%
+    select(-variant) %>%
+    slice(1) %>%  # Taking the first match in case there are duplicates
+    as.numeric()
+  
+  # Function to perform t-test between control and a specific row
+  t_test_with_control <- function(row) {
+    t.test(control_row, row, paired = FALSE, var.equal = FALSE)
+  }
+  
+  # Apply the function to each row excluding the control row
+  ttest_results <- lapply(1:dim(my_tbl_selected)[1], function(row_number) {
+    dat <- my_tbl_selected[row_number,] %>% 
+      select(starts_with("norm_to_ev")) %>% 
+      as.numeric()
+    t_test_with_control(dat)
+  })
+  # return(ttest_results)
+  ttest_results_by_variant <- sapply(names(ttest_results[[1]]), function(each_result)  {
+    all_res <- sapply(ttest_results, "[[", each_result)
+    if(class(all_res)[1] == "matrix") {
+      all_res <- t(all_res)
+      colnames(all_res) <- paste(each_result, 1:dim(all_res)[2], sep="_" )
+      all_res <- as_tibble(all_res)
+    } else {
+      all_res <- tibble(myCol=all_res)
+      colnames(all_res) <- each_result
+    }
+    return(all_res)
+  })
+  ttest_results_by_variant <- bind_cols(ttest_results_by_variant)
+  
+  my_tbl <- bind_cols(my_tbl, ttest_results_by_variant)%>% 
+    relocate(p.value, .before = statistic)
+  return(my_tbl)
+}
+
+figS2B_results_toNLS <- analyze_restriction_data_toNLS(figS2B_tableS5)
+```
+
+##For figure 4C-D t-tests to heterozygous
+```{r}
+analyze_restriction_data_toHet <- function(my_tbl) {
+  ## get just the norm_to_ev and variant cols
+  my_tbl_selected <- my_tbl %>%
+    select(variant, starts_with("norm_to_ev"))
+  
+  # Extract the control row based on the "variant" column
+  if(!"mwsrr50lydry50" %in% my_tbl_selected$variant) {
+    stop("\n\nERROR - mwsrr50lydry50 not found in the variant column\n\n")
+  }
+  control_row <- my_tbl_selected %>%
+    filter(variant == "mwsrr50lydry50") %>%
+    select(-variant) %>%
+    slice(1) %>%  # Taking the first match in case there are duplicates
+    as.numeric()
+  
+  # Function to perform t-test between control and a specific row
+  t_test_with_control <- function(row) {
+    t.test(control_row, row, paired = FALSE, var.equal = FALSE)
+  }
+  
+  # Apply the function to each row excluding the control row
+  ttest_results <- lapply(1:dim(my_tbl_selected)[1], function(row_number) {
+    dat <- my_tbl_selected[row_number,] %>% 
+      select(starts_with("norm_to_ev")) %>% 
+      as.numeric()
+    t_test_with_control(dat)
+  })
+  # return(ttest_results)
+  ttest_results_by_variant <- sapply(names(ttest_results[[1]]), function(each_result)  {
+    all_res <- sapply(ttest_results, "[[", each_result)
+    if(class(all_res)[1] == "matrix") {
+      all_res <- t(all_res)
+      colnames(all_res) <- paste(each_result, 1:dim(all_res)[2], sep="_" )
+      all_res <- as_tibble(all_res)
+    } else {
+      all_res <- tibble(myCol=all_res)
+      colnames(all_res) <- each_result
+    }
+    return(all_res)
+  })
+  ttest_results_by_variant <- bind_cols(ttest_results_by_variant)
+  
+  my_tbl <- bind_cols(my_tbl, ttest_results_by_variant)%>% 
+    relocate(p.value, .before = statistic)
+  return(my_tbl)
+}
+
+fig4C_results <- analyze_restriction_data_toHet(fig4C_tableS14)
+fig4D_results <- analyze_restriction_data_toHet(fig4D_tableS15)
+```
+
+##Export results as new spreadsheet
+```{r}
+H5N1_SRs_paper_ttest_results <- createWorkbook()
+
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig1C_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig2C_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig2C_results_toSWSTR')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig2D_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'figS1_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'figS2B_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'figS2B_results_toNLS')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'figS3A_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'figS3B_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig4A_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig4B_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig4C_results')
+addWorksheet(H5N1_SRs_paper_ttest_results, 'fig4D_results')
+
+writeData(H5N1_SRs_paper_ttest_results, 'fig1C_results', fig1C_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig2C_results', fig2C_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig2C_results_toSWSTR', fig2C_results_toSWSTR)
+writeData(H5N1_SRs_paper_ttest_results, 'fig2D_results', fig2D_results)
+writeData(H5N1_SRs_paper_ttest_results, 'figS1_results', figS1_results)
+writeData(H5N1_SRs_paper_ttest_results, 'figS2B_results', figS2B_results)
+writeData(H5N1_SRs_paper_ttest_results, 'figS2B_results_toNLS', figS2B_results_toNLS)
+writeData(H5N1_SRs_paper_ttest_results, 'figS3A_results', figS3A_results)
+writeData(H5N1_SRs_paper_ttest_results, 'figS3B_results', figS3B_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig4A_results', fig4A_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig4B_results', fig4B_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig4C_results', fig4C_results)
+writeData(H5N1_SRs_paper_ttest_results, 'fig4D_results', fig4D_results)
+
+saveWorkbook(H5N1_SRs_paper_ttest_results, 'H5N1_SRs_paper_ttest_results.xlsx', overwrite = TRUE)
+```
